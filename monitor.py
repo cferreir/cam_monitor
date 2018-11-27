@@ -10,15 +10,29 @@ import imutils
 import time
 import cv2
 
-# if the video argument is None, then we are reading from webcam
-vs = cv2.VideoCapture(0)
 
 # initialize the first frame in the video stream
 firstFrame = None
 # loop over the frames of the video
 hits = 0
 
+# Open the Webcam 0. Assuming we have at least one
+
+i = 0
+vs = cv2.VideoCapture(i)
+vs2 = vs
+
 CHNG_THRESH = 50   # Change Threshold used to be 25
+
+while vs2.isOpened() == TRUE:
+    i = ++i
+    vs2 = cv2.VideoCapture(i)
+    if vs2.isOpened() == False:
+        print('No Webcam #'+str(i)+' \n')
+        vs2.release()
+        del(vs2)
+        break
+
 
 try:
     while True:
