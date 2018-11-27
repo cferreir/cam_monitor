@@ -24,8 +24,8 @@ vs2 = vs
 
 CHNG_THRESH = 50   # Change Threshold used to be 25
 
-while vs2.isOpened() == TRUE:
-    i = ++i
+while vs2.isOpened() == True:
+    i = i+1
     vs2 = cv2.VideoCapture(i)
     if vs2.isOpened() == False:
         print('No Webcam #'+str(i)+' \n')
