@@ -19,26 +19,29 @@ hits = 0
 # Open the Webcam 0. Assuming we have at least one
 
 i = 0
-vs = cv2.VideoCapture(i)
-vs2 = vs
+vs[i] = cv2.VideoCapture(i)
+
 
 CHNG_THRESH = 50   # Change Threshold used to be 25
 
-while vs2.isOpened() == True:
-    i = i+1
-    vs2 = cv2.VideoCapture(i)
-    if vs2.isOpened() == False:
-        print('No Webcam #'+str(i)+' \n')
-        vs2.release()
-        del(vs2)
-        break
-
+if vs[i].isOpened() == True:
+    while True:
+        i = i+1
+        vs[i] = cv2.VideoCapture(i)
+        if vs[i].isOpened() == False:
+            print('No Webcam #'+str(i)+' \n')
+            vs[i].release()
+            vs.pop(i)
+            break
+else:
+    print('No Webcam in the system')
+    os._exit(1)
 
 try:
     while True:
       # grab the current frame and initialize the occupied/unoccupied
       # text
-      retval, frame = vs.read()
+      retval, frame = vs[0].read()
       text = "Unoccupied"
       
     	# if the frame could not be grabbed, then we have reached the end
@@ -97,10 +100,11 @@ try:
 
         
 except (KeyboardInterrupt, SystemExit): #when you press ctrl+c
-    print "\nKilling Thread..."
-    vs.release()
-    del(vs)
-    print "Done.\nExiting."
+    print('\nKilling Thread...')
+    for i in len(vs): 
+        vs[i-1].release()
+        del(vs[i-1])
+    print('Done.\nExiting.')
 # cleanup the camera and close any open windows
 
 # cv2.destroyAllWindows()
