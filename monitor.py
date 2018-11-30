@@ -1,10 +1,9 @@
 #! /usr/bin/python
-# Enhanced by Carlos Ferreira Oct 26 2018
+# Enhanced by Carlos Ferreira Nov 30 2018
 # License: GPL 2.0 
 # import the necessary packages
 import os
-import time
-from time import *
+
 import sys
 from imutils.video import VideoStream
 import argparse
@@ -12,21 +11,25 @@ import datetime
 import imutils
 import cv2
 
-
+import time
+from time import sleep
 
 # initialize the first frame in the video stream
 firstFrame = None
 # loop over the frames of the video
 hits = 0
 
-# Open the Webcam 0. Assuming we have at least one
+# Open the Webcam 0. Assuming we have at least one and a logging file
+
+sys.stdout = open('monitor.log', 'w')
+print 'Camera Monitoring Log for '+datetime.datetime.now().strftime("%A %d %B %Y %I:%M:%S%p")+'\n\n\n'
 
 i = 0
 vs = [cv2.VideoCapture(i)]
 
 CHNG_THRESH = 50   # Change Threshold used to be 25
 
-# import number of cameras
+# import number of cameras enviroment CAMERA_COUNT
 if os.environ.get('CAMERA_COUNT'):
     cam_count = int(os.environ['CAMERA_COUNT']) - 1
 else:
@@ -105,18 +108,19 @@ try:
     	# show the frame and record if the user presses a key
 
       if text == "Occupied":
+        print 'Movement detected '+datetime.datetime.now().strftime("%A %d %B %Y %I:%M:%S%p")+'\n'
         cv2.imwrite('Security'+str(hits)+'.png', frame)
         for x in range(cam_count):
           retval, frame = vs[x+1].read()
           cv2.imwrite('Cam'+str(x+1)+'_'+str(hits)+'.png', frame)
-        hits = hits+1
-        time.sleep(4)      # detected motion sleep 4 seconds to confirm
-
+        hits = hits + 1
+        sleep(4)            # give it a minute before you grab more frames
+        
       if hits > 19:        # recycle videos so as not to eat space
         hits = 0
         
 except (KeyboardInterrupt, SystemExit): #when you press ctrl+c
-    print "\nKilling Thread..."
+    print "Killing Thread...\n"
     i = 0
     while i <= cam_count:
         vs[i].release()
@@ -124,6 +128,4 @@ except (KeyboardInterrupt, SystemExit): #when you press ctrl+c
         i = i + 1
 
     print "Done.\nExiting."
-# cleanup the camera and close any open windows
-
-# cv2.destroyAllWindows()
+    sys.stdout.close()
