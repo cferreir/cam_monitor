@@ -3,6 +3,7 @@
 # License: GPL 2.0 
 # import the necessary packages
 import os
+import sys
 from imutils.video import VideoStream
 import argparse
 import datetime
@@ -19,26 +20,42 @@ hits = 0
 # Open the Webcam 0. Assuming we have at least one
 
 i = 0
-vs = cv2.VideoCapture(i)
-vs2 = vs
+vs = [cv2.VideoCapture(i)]
 
 CHNG_THRESH = 50   # Change Threshold used to be 25
 
-while vs2.isOpened() == TRUE:
-    i = ++i
-    vs2 = cv2.VideoCapture(i)
-    if vs2.isOpened() == False:
+# import number of cameras
+if os.environ.get('CAMERA_COUNT'):
+    cam_count = int(os.environ['CAMERA_COUNT']) - 1
+else:
+    cam_count = 0
+
+while i < cam_count:
+    i = i+1
+    try:
+      vs.append(cv2.VideoCapture(i))
+      if not vs[i].isOpened():
         print('No Webcam #'+str(i)+' \n')
-        vs2.release()
-        del(vs2)
+        vs[i].release()
+        vs.pop(i)
+        i = i -1
         break
+    except Exception as ex:
+      template = "An exception of type {0} occurred. Arguments:\n{1!r}"
+      message = template.format(type(ex).__name__, ex.args)
+      print message
+      print('ERROR CAUGHT: Webcam #'+str(i)+' \n')
+      vs.pop(i)
+      i = i -1
+      break
+
 
 
 try:
     while True:
       # grab the current frame and initialize the occupied/unoccupied
       # text
-      retval, frame = vs.read()
+      retval, frame = vs[0].read()
       text = "Unoccupied"
       
     	# if the frame could not be grabbed, then we have reached the end
@@ -91,6 +108,9 @@ try:
       # cv2.imshow("Frame Delta", frameDelta)
       if text == "Occupied":
         cv2.imwrite('Security'+str(hits)+'.png', frame)
+        for x in range(cam_count):
+          retval, frame = vs[x+1].read()
+          cv2.imwrite('Cam'+str(x+1)+'_'+str(hits)+'.png', frame)
         hits = hits+1
       # cv2.imwrite('Thresh.png', thresh)
       # cv2.imwrite('Delta.png', frameDelta)
@@ -98,8 +118,11 @@ try:
         
 except (KeyboardInterrupt, SystemExit): #when you press ctrl+c
     print "\nKilling Thread..."
-    vs.release()
-    del(vs)
+    while i > -1:
+        vs[i].release()
+        del(vs[i])
+        i = i - 1
+
     print "Done.\nExiting."
 # cleanup the camera and close any open windows
 
