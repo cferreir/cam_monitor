@@ -3,13 +3,15 @@
 # License: GPL 2.0 
 # import the necessary packages
 import os
+import time
+from time import *
 import sys
 from imutils.video import VideoStream
 import argparse
 import datetime
 import imutils
-import time
 import cv2
+
 
 
 # initialize the first frame in the video stream
@@ -65,8 +67,6 @@ try:
         break
     
     	# resize the frame, convert it to grayscale, and blur it
-     
-      # cv2.imwrite('monitor.png', frame)
       
       frame = imutils.resize(frame, width=500)
       gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -103,25 +103,25 @@ try:
       cv2.putText(frame, datetime.datetime.now().strftime("%A %d %B %Y %I:%M:%S%p"), (10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 255), 1)
       
     	# show the frame and record if the user presses a key
-      # cv2.imshow("Security Feed", frame)
-      # cv2.imshow("Thresh", thresh)
-      # cv2.imshow("Frame Delta", frameDelta)
+
       if text == "Occupied":
         cv2.imwrite('Security'+str(hits)+'.png', frame)
         for x in range(cam_count):
           retval, frame = vs[x+1].read()
           cv2.imwrite('Cam'+str(x+1)+'_'+str(hits)+'.png', frame)
         hits = hits+1
-      # cv2.imwrite('Thresh.png', thresh)
-      # cv2.imwrite('Delta.png', frameDelta)
+        time.sleep(4)      # detected motion sleep 4 seconds to confirm
 
+      if hits > 19:        # recycle videos so as not to eat space
+        hits = 0
         
 except (KeyboardInterrupt, SystemExit): #when you press ctrl+c
     print "\nKilling Thread..."
-    while i > -1:
+    i = 0
+    while i <= cam_count:
         vs[i].release()
         del(vs[i])
-        i = i - 1
+        i = i + 1
 
     print "Done.\nExiting."
 # cleanup the camera and close any open windows
