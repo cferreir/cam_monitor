@@ -19,7 +19,7 @@ import imutils
 import re            # for finding USB devices
 import shlex
 import subprocess
-import multiprocessing
+import multiprocessing as mp
 
 #Libraries
 import RPi.GPIO as GPIO
@@ -28,16 +28,10 @@ import RPi.GPIO as GPIO
 import cv2
 # import cv2.cv as cv
 # from common import clock, draw_str
- 
 
-
-gpsd = None #seting the global variable
-cam_count = 0 # number of cameras in system, using Microsoft only for now
-HighRes_Cam = 0 #default is 0 camera 
-address = 'NOWHERE' # address is global
-Movement = False  #Default nobody home
-Sonar_Movement = False # No Movement
-vs = [] # init VS array
+#set GPIO Pins
+GPIO_TRIGGER = 24
+GPIO_ECHO = 23
 
 def Ping():
   GPIO.output(GPIO_TRIGGER, True)
@@ -68,16 +62,11 @@ def Ping():
 def SonarDistance(qs):
     #GPIO Mode (BOARD / BCM)
     GPIO.setmode(GPIO.BCM)
- 
-    #set GPIO Pins
-    GPIO_TRIGGER = 24
-    GPIO_ECHO = 23
- 
+
     #set GPIO direction (IN / OUT)
     GPIO.setup(GPIO_TRIGGER, GPIO.OUT)
     GPIO.setup(GPIO_ECHO, GPIO.IN)
     distance = 0
-    global distance
     while True:
       distance0 = Ping()
       time.sleep(2)
@@ -87,8 +76,8 @@ def SonarDistance(qs):
         # print 'SONAR detected Movement at distance ='+str(distance1)+' cm'
         distance = distance1
         time.sleep(5)
-    print "Exiting Sonar Thread...\n"
-    GPIO.cleanup()
+
+
 
 def GpsPoller(qg):
     gpsd = gps(mode=WATCH_ENABLE) #starting the stream of info
@@ -99,9 +88,9 @@ def GpsPoller(qg):
       gpsd.next() #this will continue to loop and grab EACH set of gpsd info to clear the buffer
       if qg.empty():
         qg.put(gpsd)
-    print "Exiting GPS Thread...\n"
+
    
-def CamMovement(qc, vs, HighReas_Cam, cam_count):
+def CamMovement(qc, vs, HighRes_Cam, cam_count):
     
     firstFrame = None
     hits = 0                                 # counter for us to cycle over files
@@ -178,10 +167,8 @@ def CamMovement(qc, vs, HighReas_Cam, cam_count):
             cv2.putText(frame, datetime.datetime.now().strftime("%A %d %B %Y %I:%M:%S%p"), (10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 255), 1)
             cv2.imwrite(str(hits)+'_Cam'+str(x)+'_'+'.png', frame)
         hits = hits + 1
-        Movement = True
+        qc.put([True, datetime.datetime.now()])
         sleep(4)            # give it 4 secs before you grab more frames
-      else:
-        Movement = False
 
       
       #DEBUG
@@ -191,35 +178,6 @@ def CamMovement(qc, vs, HighReas_Cam, cam_count):
       if hits > 19:        # recycle videos so as not to eat space
         hits = 0
              
-    print "Exiting Camera Thread...\n"
-    i = 0
-    while i < (cam_count-1):
-        vs[i].release()
-        vs.pop(i)
-        i = i + 1
-    
-
-def get_image(ramp_frames):
-    # read is the easiest way to get a full image out of a VideoCapture object.
-    # Ramp the camera - these frames will be discarded and are only used to allow v4l2
-    # to adjust light levels, if necessary
-    for i in xrange(ramp_frames):
-       temp = camera.read()
-    retval, im = camera.read()
-    return im
- 
-def detect(img, cascade):
-    rects = cascade.detectMultiScale(img, scaleFactor=1.3, minNeighbors=4, minSize=(30, 30), flags = cv2.CASCADE_SCALE_IMAGE)
-    if len(rects) == 0:
-        return []
-    rects[:,2:] += rects[:,:2]
-    return rects
-
-def draw_rects(img, rects, color):
-    for x1, y1, x2, y2 in rects:
-        cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
-
-
 if __name__ == '__main__':
 
   cam_count = 0 # number of cameras in system, using Microsoft only for now
@@ -238,7 +196,7 @@ if __name__ == '__main__':
   for i in lines:
     if i:
       info = re.search("LifeCam\sStudio", i)
-        if info:
+      if info:
           info = device_re.match(lines.next())
           if info:
             dinfo = info.groupdict()
@@ -249,11 +207,11 @@ if __name__ == '__main__':
             if info:
               cam_count = cam_count + 1
  
-   i = 0
+  i = 0
     
-   print 'HighRes_Cam is '+str(HighRes_Cam)+'\n'
+  print 'HighRes_Cam is '+str(HighRes_Cam)+'\n'
     
-   while i < cam_count:
+  while i < cam_count:
      try:
        vs.append(cv2.VideoCapture(i))
        if not vs[i].isOpened():
@@ -263,32 +221,33 @@ if __name__ == '__main__':
          i = i -1
          break
 #          print 'Webcam: '+str(i)+' WIDTH: '+str(vs[i].get(3))+' HEIGHT: '+str(vs[i].get(4))+' FPS: '+str(vs[i].get(5))+' Format: '+str(vs[i].get(8))+' Mode: '+str(vs[i].get(9))+' Bright: '+str(vs[i].get(10))+' Contr: '+str(vs[i].get(11))+' Sat: '+str(vs[i].get(12))
-      i = i+1
-    except Exception as ex:
-      template = "An exception of type {0} occurred. Arguments:\n{1!r}"
-      message = template.format(type(ex).__name__, ex.args)
-      print message
-      print('ERROR CAUGHT: Webcam #'+str(i)+' \n')
-      vs.pop(i)
-      i = i -1
-      break
+       i = i+1
+     except Exception as ex:
+       template = "An exception of type {0} occurred. Arguments:\n{1!r}"
+       message = template.format(type(ex).__name__, ex.args)
+       print message
+       print('ERROR CAUGHT: Webcam #'+str(i)+' \n')
+       vs.pop(i)
+       i = i -1
+       break
   
-  qs = Queue()
-  qg = Queue()
-  qc = Queue()
-  ps = Process(target=SonarDistance, args=(qs,))
-  pg = Process(target=GpsPoller, args=(qg,))
-  pc = Process(target=CamMovement, args=(qc, vs, HighReas_Cam, cam_count))
+  qs = mp.Queue()
+  qg = mp.Queue()
+  qc = mp.Queue()
+  ps = mp.Process(target=SonarDistance, args=(qs,))
+  pg = mp.Process(target=GpsPoller, args=(qg,))
+  pc = mp.Process(target=CamMovement, args=(qc, vs, HighRes_Cam, cam_count))
   
   ps.start()
   pg.start()
   pc.start()
-    print(q.get())    # prints "[42, None, 'hello']"
-    p.join()
   
   try:
 
-    
+    while qg.empty():
+      if not qg.empty():
+        break
+    qg.get(gpsd)    
     ltlg = str(gpsd.fix.latitude)+','+str(gpsd.fix.longitude)
     payload = {'latlng': ltlg, 'key': 'AIzaSyCFAu81ebNZ36Bi557-SFKg19wMQ848EcU'}
    
@@ -318,22 +277,33 @@ if __name__ == '__main__':
         # If response code is not ok (200), print the resulting http error code with description
         r.raise_for_status()
         print "Address API Error\n"
-
-    Move1.start() # Start checking for movement
-        
+    
+    mov = []
+    cmov = []
+    
     while True:
-      if Movement:
-        print 'Camera detected movement might be at '+str(distance)+' cm'
-      if Sonar_Movement:
-        print 'Sonar detected movement at '+str(distance)+' cm'
+      if not qs.empty():
+        qs.get(mov)
+        print '****SONAR**** detected movement might be at '+str(mov[1])+' cm'
+      if not qc.empty():
+        qc.get(cmov)
+        print '####CAMERA#### detected movement on '+cmov[1].strftime("%A %d %B %Y %I:%M:%S%p")
       time.sleep(3) #set to whatever
 
   except (KeyboardInterrupt, SystemExit): #when you press ctrl+c
-    print "\nKilling Thread..."
-    Move1.running = False
-    gpsp.running = False
-    sonar1.running = False
-    Move1.join() # wait for the thread to finish what it's doing
+    print "\nKilling Children..."
+    qc.terminate()
+    print "Exiting Camera Process...\n"
+    qs.terminate()
+    print "Exiting Sonar Process...\n"
+    qg.terminate()
+    print "Exiting GPS Process...\n"
+    GPIO.cleanup()
+    i = 0
+    while i < (cam_count-1):
+      vs[i].release()
+      vs.pop(i)
+      i = i + 1
   print "Done.\nExiting."
 
  
