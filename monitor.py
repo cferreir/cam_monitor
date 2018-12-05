@@ -25,7 +25,7 @@ hits = 0
 # Open the Webcam 0. Assuming we have at least one and a logging file
 
 sys.stdout = open('monitor.log', 'w')
-print 'Camera Monitoring Log for '+datetime.datetime.now().strftime("%A %d %B %Y %I:%M:%S%p")+'\n\n\n'
+print 'Camera Monitoring Log for '+datetime.datetime.now().strftime("%A %d %B %Y %I:%M:%S%p")+'\n\n'
 
 device_re = re.compile("Bus\s+(?P<bus>\d+)\s+Device\s+(?P<device>\d+).+ID\s(?P<id1>\w+)+:+(?P<id2>\w+)\s(?P<tag>.+)$", re.I)
 df = subprocess.check_output("lsusb")
@@ -37,7 +37,7 @@ for i in df.split('\n'):
             dinfo = info.groupdict()
             dinfo.pop('bus')
             dinfo.pop('id2')
-            if dinfo['id1'] == '045e':
+            if dinfo['id1'] == '045e':             # since all cameras are Microsoft this works....
               devices.append(dinfo)
 devices.sort()
 print devices
