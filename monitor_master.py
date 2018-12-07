@@ -28,10 +28,16 @@ import RPi.GPIO as GPIO
 import cv2
 # import cv2.cv as cv
 # from common import clock, draw_str
+import signal
 
 #set GPIO Pins
 GPIO_TRIGGER = 24
 GPIO_ECHO = 23
+
+Sonar_Run = True
+GPS_Run = True
+Cam_Run = True
+All_Run = True
 
 def Ping():
   GPIO.output(GPIO_TRIGGER, True)
@@ -58,8 +64,12 @@ def Ping():
   dist = round((TimeElapsed * 34030) / 2)
   return dist
 
+def sigterm_sonar(_signo, _stack_frame):
+    global Sonar_Run
+    Sonar_Run = False
 
 def SonarDistance(qs):
+    global Sonar_Run
     #GPIO Mode (BOARD / BCM)
     GPIO.setmode(GPIO.BCM)
 
@@ -67,49 +77,76 @@ def SonarDistance(qs):
     GPIO.setup(GPIO_TRIGGER, GPIO.OUT)
     GPIO.setup(GPIO_ECHO, GPIO.IN)
     distance = 0
-    while True:
+    signal.signal(signal.SIGTERM, sigterm_sonar)
+    signal.signal(signal.SIGINT, sigterm_sonar)
+
+    while Sonar_Run:
       distance0 = Ping()
       time.sleep(2)
       distance1 = Ping()
       if distance1 > (distance0 + 10) or distance1 < (distance0 - 10):
-        q.put([True, distance1])
-        # print 'SONAR detected Movement at distance ='+str(distance1)+' cm'
+        qs.put(distance1)
         distance = distance1
         time.sleep(5)
+    GPIO.cleanup()
 
-
+def sigterm_gps(_signo, _stack_frame):
+    # Raises SystemExit(0):
+    global GPS_Run
+    GPS_Run = False
 
 def GpsPoller(qg):
-    gpsd = gps(mode=WATCH_ENABLE) #starting the stream of info
-    while gpsd.fix.latitude == 0:
-        gpsd.next()
+    global GPS_Run
+    gpsdt = gps(mode=WATCH_ENABLE) #starting the stream of info
+    signal.signal(signal.SIGTERM, sigterm_gps)
+    signal.signal(signal.SIGINT, sigterm_gps)
+    while gpsdt.fix.latitude == 0:
+        gpsdt.next()
         time.sleep(3)
-    while True:
-      gpsd.next() #this will continue to loop and grab EACH set of gpsd info to clear the buffer
-      if qg.empty():
-        qg.put(gpsd)
+    while GPS_Run:
+      time.sleep(3)        # don't loop like crazy....
+      if qg.empty():      # only get GPS coordinate if someone pulled the location out.....
+        gpsdt.next() #this will continue to loop and grab EACH set of gpsd info to clear the buffer
+        qg.put([gpsdt.fix.latitude, gpsdt.fix.longitude])
 
+def sigterm_cam(_signo, _stack_frame):
+    # Raises SystemExit(0):
+    global Cam_Run
+    Cam_Run = False
    
-def CamMovement(qc, vs, HighRes_Cam, cam_count):
-    
+def CamMovement(qc):
+    global Cam_Run
     firstFrame = None
     hits = 0                                 # counter for us to cycle over files
-    
-    #DEBUG
-    # print 'DEBUG: Entering main camera monitor loop'
-    #DEBUG
+
     CHNG_THRESH = 65   # Change Threshold used to be 25    
+
+    HR_Cam = qc.get()
     
-    while True:
+    cc = qc.get()
+    i = 0
+   
+    vs = [] # init VS array
+  
+    while i < cam_count:
+      vs.append(cv2.VideoCapture(i))
+      if not vs[i].isOpened():
+        print('Could not open webcam #'+str(i)+' \n')
+        vs[i].release()
+        vs.pop(i)
+        i = i-1
+        break
+      i = i+1
+    
+    signal.signal(signal.SIGTERM, sigterm_cam)
+    signal.signal(signal.SIGINT, sigterm_cam)
+    
+    while Cam_Run:
 
       # grab the current frame and initialize the occupied/unoccupied
-      retval, frame = vs[HighRes_Cam].read()
+      retval, frame = vs[HR_Cam].read()
       text = "Unoccupied"
-      
-      #DEBUG
-      # cv2.imwrite('FRAME.png', frame)
-      #DEBUG
-      
+          
     	# if the frame could not be grabbed, then we have reached the end
     	# of the video
      
@@ -146,9 +183,10 @@ def CamMovement(qc, vs, HighRes_Cam, cam_count):
         # compute the bounding box for the contour, draw it on the frame,
         # and update the text
         (x, y, w, h) = cv2.boundingRect(c)
-        cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-        text = "Occupied"
-        Caption = text+' !'
+        if (w > 10) and (h > 10):                                        # trying to eliminate tiny changes
+          cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+          text = "Occupied"
+          Caption = text+' !'
     
     	# draw the text and timestamp on the frame
       cv2.putText(frame, "Room Status: {}".format(Caption), (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
@@ -156,11 +194,9 @@ def CamMovement(qc, vs, HighRes_Cam, cam_count):
       
     	# show the frame
       if text == "Occupied":
-        print 'Movement detected '+datetime.datetime.now().strftime("%A %d %B %Y %I:%M:%S%p")
-        print 'Location: '+address
         cv2.imwrite(str(hits)+'_Security'+'.png', frame)
-        for x in range(cam_count):
-          if x != HighRes_Cam:
+        for x in range(cc):
+          if x != HR_Cam:
             retval, frame = vs[x].read()
             Caption = str(x)
             cv2.putText(frame, "Camera: {}".format(Caption), (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
@@ -168,29 +204,35 @@ def CamMovement(qc, vs, HighRes_Cam, cam_count):
             cv2.imwrite(str(hits)+'_Cam'+str(x)+'_'+'.png', frame)
         hits = hits + 1
         qc.put([True, datetime.datetime.now()])
+
         sleep(4)            # give it 4 secs before you grab more frames
 
-      
-      #DEBUG
-      # print 'DEBUG: looping HITS='+str(hits)
-      #DEBUG      
-      
       if hits > 19:        # recycle videos so as not to eat space
         hits = 0
+    i = 0
+    while i < (cam_count-1):
+      vs[i].release()
+      vs.pop(i)
+      i = i + 1
+
+def sigterm_main(_signo, _stack_frame):
+    global All_Run
+    All_Run = False
              
 if __name__ == '__main__':
+
+
+  signal.signal(signal.SIGTERM, sigterm_main)
+  signal.signal(signal.SIGINT, sigterm_main)
 
   cam_count = 0 # number of cameras in system, using Microsoft only for now
   HighRes_Cam = 0 #default is 0 camera 
 
-  vs = [] # init VS array
-  
   sys.stdout = open('monitor.log', 'w')
   print 'Camera and Sonar Monitoring Log for '+datetime.datetime.now().strftime("%A %d %B %Y %I:%M:%S%p")+'\n\n'
   
   device_re = re.compile("\t/dev/video(?P<HDCam>\d+)$", re.I)
   args = shlex.split("v4l2-ctl --list-devices")
-#    device_re = re.compile("Bus\s+(?P<bus>\d+)\s+Device\s+(?P<device>\d+).+ID\s(?P<id1>\w+)+:+(?P<id2>\w+)\s(?P<tag>.+)$", re.I)
   df = subprocess.check_output(args)
   lines = iter(df.split('\n'))
   for i in lines:
@@ -202,108 +244,77 @@ if __name__ == '__main__':
             dinfo = info.groupdict()
             cam_count = cam_count + 1
             HighRes_Cam = int(dinfo['HDCam'])
-          else:
-            info = re.search("\t/dev/video\d+$", i)
-            if info:
-              cam_count = cam_count + 1
- 
-  i = 0
-    
-  print 'HighRes_Cam is '+str(HighRes_Cam)+'\n'
-    
-  while i < cam_count:
-     try:
-       vs.append(cv2.VideoCapture(i))
-       if not vs[i].isOpened():
-         print('No Webcam #'+str(i)+' \n')
-         vs[i].release()
-         vs.pop(i)
-         i = i -1
-         break
-#          print 'Webcam: '+str(i)+' WIDTH: '+str(vs[i].get(3))+' HEIGHT: '+str(vs[i].get(4))+' FPS: '+str(vs[i].get(5))+' Format: '+str(vs[i].get(8))+' Mode: '+str(vs[i].get(9))+' Bright: '+str(vs[i].get(10))+' Contr: '+str(vs[i].get(11))+' Sat: '+str(vs[i].get(12))
-       i = i+1
-     except Exception as ex:
-       template = "An exception of type {0} occurred. Arguments:\n{1!r}"
-       message = template.format(type(ex).__name__, ex.args)
-       print message
-       print('ERROR CAUGHT: Webcam #'+str(i)+' \n')
-       vs.pop(i)
-       i = i -1
-       break
-  
+      else:
+          info = re.search("\t/dev/video\d+$", i)
+          if info:
+            cam_count = cam_count + 1
+
   qs = mp.Queue()
   qg = mp.Queue()
   qc = mp.Queue()
+  
+  qc.put(HighRes_Cam)
+  qc.put(cam_count)
+
   ps = mp.Process(target=SonarDistance, args=(qs,))
   pg = mp.Process(target=GpsPoller, args=(qg,))
-  pc = mp.Process(target=CamMovement, args=(qc, vs, HighRes_Cam, cam_count))
-  
-  ps.start()
+  pc = mp.Process(target=CamMovement, args=(qc,))
+
   pg.start()
+  ps.start()
   pc.start()
-  
+
+  while qg.empty():
+    time.sleep(2)
+    if not qg.empty():
+      break
+  lat, lng = qg.get()    
+  ltlg = str(lat)+','+str(lng)
+  payload = {'latlng': ltlg, 'key': 'AIzaSyCFAu81ebNZ36Bi557-SFKg19wMQ848EcU'}
+
+  sys.stdout.flush()
+
   try:
-
-    while qg.empty():
-      if not qg.empty():
-        break
-    qg.get(gpsd)    
-    ltlg = str(gpsd.fix.latitude)+','+str(gpsd.fix.longitude)
-    payload = {'latlng': ltlg, 'key': 'AIzaSyCFAu81ebNZ36Bi557-SFKg19wMQ848EcU'}
-   
-    print "Latitude and Longitude: " + ltlg
-    
-    sys.stdout.flush()
-
-    try:
-      r = requests.get('https://maps.googleapis.com/maps/api/geocode/json', params=payload)
-    except (Exception):
-      print 'BAD HTTPS request'
-      r = requests.get('http://www.google.com')
-      r.ok = False
+    r = requests.get('https://maps.googleapis.com/maps/api/geocode/json', params=payload)
+  except (Exception):
+    print 'BAD HTTPS request'
+    r = requests.get('http://www.google.com')
+    r.ok = False
 
 # For successful API call, response code will be 200 (OK)
-    if(r.ok):
-        # Loading the response data into a dict variable
-        # json.loads takes in only binary or string variables so using content to fetch binary content
-        # Loads (Load String) takes a Json file and converts into python data structure (dict or list, depending on JSON)
-        jData = json.loads(r.content)
+  if(r.ok):
+      # Loading the response data into a dict variable
+      # json.loads takes in only binary or string variables so using content to fetch binary content
+      # Loads (Load String) takes a Json file and converts into python data structure (dict or list, depending on JSON)
+      jData = json.loads(r.content)
 
-        # print("The response contains {0} properties".format(len(jData)))
-        # print("\n")
-        address = jData['results'][0]['formatted_address']
-        print 'Monitoring at address: '+address+'\n' 
-    else:
-        # If response code is not ok (200), print the resulting http error code with description
-        r.raise_for_status()
-        print "Address API Error\n"
-    
-    mov = []
-    cmov = []
-    
-    while True:
-      if not qs.empty():
-        qs.get(mov)
-        print '****SONAR**** detected movement might be at '+str(mov[1])+' cm'
-      if not qc.empty():
-        qc.get(cmov)
-        print '####CAMERA#### detected movement on '+cmov[1].strftime("%A %d %B %Y %I:%M:%S%p")
-      time.sleep(3) #set to whatever
+      # print("The response contains {0} properties".format(len(jData)))
+      # print("\n")
+      address = jData['results'][0]['formatted_address']
+      print 'Monitoring at address: '+address+'\n' 
+  else:
+      # If response code is not ok (200), print the resulting http error code with description
+      r.raise_for_status()
+      print "Address API Error\n"
 
-  except (KeyboardInterrupt, SystemExit): #when you press ctrl+c
-    print "\nKilling Children..."
-    qc.terminate()
-    print "Exiting Camera Process...\n"
-    qs.terminate()
-    print "Exiting Sonar Process...\n"
-    qg.terminate()
-    print "Exiting GPS Process...\n"
-    GPIO.cleanup()
-    i = 0
-    while i < (cam_count-1):
-      vs[i].release()
-      vs.pop(i)
-      i = i + 1
+  while All_Run:
+    if not qs.empty():
+      dist = qs.get()
+      print '****SONAR**** detected movement might be at '+str(dist)+' cm'
+    if not qc.empty():
+      mov, movdate = qc.get()
+      print '####CAMERA#### detected movement on '+movdate.strftime("%A %d %B %Y %I:%M:%S%p")
+      print 'Location: '+address
+    time.sleep(3) #set to whatever
+
+  print "\nKilling Children..."
+  pc.terminate()
+  print "Exiting Camera Process..."
+  ps.terminate()
+  print "Exiting Sonar Process..."
+  pg.terminate()
+  print "Exiting GPS Process..."
+
   print "Done.\nExiting."
 
  
